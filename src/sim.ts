@@ -10,7 +10,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import http from 'node:http';
-import { promises as fs } from 'node:fs';
+import { promises as fs, existsSync } from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import Busboy from 'busboy';
@@ -165,11 +165,17 @@ export async function startSimulator(opts: SimulatorOptions = {}): Promise<Runni
   const host = opts.host ?? '127.0.0.1';
 
   const registry: Registry = await loadRegistry(registryFile);
+  // Namespace names from config become on-disk directory segments — validate them
+  // at this chokepoint, just like deploy() and the REST namespace routes do.
   for (const ns of opts.namespaces ?? []) {
+    if (!isValidName(ns)) throw new ValidationError(`invalid namespace name: ${ns}`);
     if (!registry.namespaces[ns]) {
       registry.namespaces[ns] = { id: randomUUID(), created_on: nowIso() };
       registry.scripts[ns] = registry.scripts[ns] ?? {};
     }
+  }
+  for (const ns of Object.keys(opts.outbounds ?? {})) {
+    if (!isValidName(ns)) throw new ValidationError(`invalid outbound namespace name: ${ns}`);
   }
   await saveRegistry(registryFile, registry);
 
@@ -239,6 +245,10 @@ export async function startSimulator(opts: SimulatorOptions = {}): Promise<Runni
         // safeJoin's only role here is the validation; we use the returned
         // `rel` directly later via path.join(stagingDir, rel) — never re-derive.
         if (!safeJoin(finalDir, rel)) throw new ValidationError(`unsafe module path: ${rel}`);
+        // The `__wfp_` prefix is reserved for sim-generated modules (wrapper,
+        // asset-only delegator); a user module using it would collide on disk and
+        // be hidden from GET /content. Reject it up front.
+        if (path.basename(rel).startsWith('__wfp_')) throw new ValidationError(`reserved module name (the __wfp_ prefix is reserved): ${rel}`);
         fileBufs.push({ rel, buf: typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content) });
       }
 
@@ -502,7 +512,12 @@ async function handleDispatch(
     duplex: body ? 'half' : undefined,
     redirect: 'manual',
   });
-  res.writeHead(response.status, headersToObj(response.headers));
+  // headersToObj collapses repeated headers; Set-Cookie must stay split so a
+  // tenant returning multiple cookies isn't merged into one invalid header.
+  const outHeaders: Record<string, string | string[]> = headersToObj(response.headers);
+  const cookies = response.headers.getSetCookie();
+  if (cookies.length > 0) outHeaders['set-cookie'] = cookies;
+  res.writeHead(response.status, outHeaders);
   if (response.body) Readable.fromWeb(response.body as never).pipe(res);
   else res.end();
 }
@@ -685,7 +700,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ct
         created_on: r.created_on, modified_on: r.modified_on,
         compatibility_date: r.metadata.compatibility_date,
         compatibility_flags: r.metadata.compatibility_flags ?? [],
-        has_modules: true, has_assets: hasAssets, startup_time_ms: 0,
+        has_modules: parsed.modules.length > 0, has_assets: hasAssets, startup_time_ms: 0,
         handlers, named_handlers: [],
       }));
     }
@@ -725,7 +740,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ct
     }
     if (sub === 'content') {
       const scriptDir = path.join(ctx.scriptsDir, ns4!, scr!);
-      const files = await listFilesRecursive(scriptDir);
+      // Return only user-uploaded modules — exclude the uploaded asset tree
+      // (__assets/) and sim-generated modules (__wfp_*), which CF never echoes.
+      const files = (await listFilesRecursive(scriptDir)).filter(rel => {
+        const segs = rel.split(/[\\/]/);
+        return segs[0] !== '__assets' && !segs[segs.length - 1]!.startsWith('__wfp_');
+      });
       const boundary = `----wfpsim-${Math.random().toString(36).slice(2)}`;
       const parts: Buffer[] = [];
       const buffers = await Promise.all(files.map(rel => fs.readFile(path.join(scriptDir, rel))));
@@ -1072,6 +1092,19 @@ async function atomicWrite(p: string, data: Buffer | string): Promise<void> {
 /** Cache so we only rewrite a per-tenant wrapper when its source actually changes. */
 const wrapperCache = new Map<string /* path */, string /* src */>();
 
+/**
+ * Write a generated module (per-tenant ALS wrapper or asset-only delegator) only
+ * when its source changed OR the file is missing on disk. The path cache alone is
+ * unsafe: deploy()'s atomic dir-swap replaces the live script dir with a fresh tmp
+ * dir that never contained the generated module, so on an *unchanged* redeploy the
+ * cache would skip a write the swap made mandatory — leaving scriptPath dangling.
+ */
+function ensureGeneratedModule(p: string, src: string, writes: Promise<void>[]): void {
+  if (wrapperCache.get(p) === src && existsSync(p)) return;
+  wrapperCache.set(p, src);
+  writes.push(fs.writeFile(p, src));
+}
+
 /** Binding name synthesized for asset-only tenants that declare no `assets` binding. */
 const ASSETS_ONLY_BINDING = '__WFP_ASSETS';
 
@@ -1126,9 +1159,11 @@ async function buildMfConfig(
 
       const assetsBinding = (rec.metadata.bindings ?? []).find(b => b.type === 'assets');
       const assetsDir = path.join(dir, '__assets');
-      // Serve assets whenever the deploy carried a manifest. For asset-only deploys
-      // (no entry module) and no user-declared `assets` binding, synthesize one so
-      // the generated worker below can delegate to it.
+      // Serve assets when the deploy carried a manifest AND there's a binding to
+      // serve them through: the user's declared `assets` binding, or — for
+      // asset-only deploys (no entry module) — a synthesized one. A worker WITH an
+      // entry but no assets binding is left as-is (matches the documented limitation:
+      // the binding is required to wire env.ASSETS here).
       const assetsBindingName = assetsBinding?.name ?? (!entry && rec.metadata.assets ? ASSETS_ONLY_BINDING : undefined);
       const serveAssets = !!rec.metadata.assets && !!assetsBindingName;
 
@@ -1141,11 +1176,7 @@ async function buildMfConfig(
         // guarantees an asset bundle exists; skip defensively if it somehow doesn't.
         if (!assetsBindingName) continue;
         const assetsOnlyPath = path.join(dir, '__wfp_assets_only.mjs');
-        const assetsOnlySrc = renderAssetsOnly(assetsBindingName);
-        if (wrapperCache.get(assetsOnlyPath) !== assetsOnlySrc) {
-          wrapperCache.set(assetsOnlyPath, assetsOnlySrc);
-          wrapperWrites.push(fs.writeFile(assetsOnlyPath, assetsOnlySrc));
-        }
+        ensureGeneratedModule(assetsOnlyPath, renderAssetsOnly(assetsBindingName), wrapperWrites);
         scriptPath = assetsOnlyPath;
       } else {
         scriptPath = path.join(dir, entry);
@@ -1154,11 +1185,7 @@ async function buildMfConfig(
         // patches globalThis.fetch to re-attach the header on every subrequest.
         if (outbound) {
           const wrapperPath = path.join(dir, '__wfp_wrapper.mjs');
-          const wrapperSrc = renderWrapper(entry);
-          if (wrapperCache.get(wrapperPath) !== wrapperSrc) {
-            wrapperCache.set(wrapperPath, wrapperSrc);
-            wrapperWrites.push(fs.writeFile(wrapperPath, wrapperSrc));
-          }
+          ensureGeneratedModule(wrapperPath, renderWrapper(entry), wrapperWrites);
           scriptPath = wrapperPath;
           if (!compatFlags.includes('nodejs_compat') && !compatFlags.includes('nodejs_als')) {
             compatFlags = [...compatFlags, 'nodejs_als'];

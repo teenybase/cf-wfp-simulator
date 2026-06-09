@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1 — 2026-06-09
+
+Post-release fixes from a follow-up code review.
+
+- **Redeploy no longer breaks generated modules.** The atomic deploy dir-swap deleted the generated per-tenant wrapper / asset-only module, and a path cache then skipped rewriting it — so redeploying an outbound or asset-only tenant with unchanged source left a dangling script path (Miniflare load failure). Generated modules are now rewritten whenever the source changes **or** the file is missing.
+- **Outbound streaming subrequests fixed.** The per-tenant wrapper's `globalThis.fetch` patch now sets `duplex: 'half'` when a body is present, so `POST`/`PUT`/`PATCH` outbound subrequests with a streaming body no longer throw in workerd.
+- **`GET /content` returns only user modules** — the uploaded asset tree (`__assets/`) and sim-generated `__wfp_*` modules are excluded (matching CF). The `__wfp_` module-name prefix is now reserved (rejected on deploy).
+- **Multiple `Set-Cookie` headers preserved** on dispatched responses (previously collapsed into one invalid header).
+- Namespace-name validation applied at startup (`namespaces` / `outbounds`) too; generated outbound templates interpolate the shared header constant; `WFPClient` supports asset-only deploys; accurate `has_modules`.
+- Added a **Related projects** section linking [cf-api-sim](https://github.com/teenybase/cf-api-sim) and [teenybase](https://github.com/teenybase/teenybase).
+
 ## 0.1.0 — 2026-06-09
 
 Initial release.

@@ -144,6 +144,11 @@ const prodDispatcher    = wfpDispatcher(env, { namespace: 'production' });
 ```
 If you pass no `namespace` and `env.WFP_NAMESPACE` is unset, the wrap omits the namespace and the sim searches all namespaces for the first matching script. Set `namespace` (or `env.WFP_NAMESPACE`) to disambiguate when the same script name exists in more than one namespace.
 
+## Related projects
+
+- **[cf-api-sim](https://github.com/teenybase/cf-api-sim)** — a sibling project: a local simulator for the Cloudflare **REST API** (`/client/v4`: D1, R2, KV, Workers Scripts), to develop and test against Cloudflare's management API offline.
+- **[teenybase](https://github.com/teenybase/teenybase)** — the project these simulators came from: backend-as-config on Cloudflare Workers + D1.
+
 ## Credits
 
 Built by the [teenybase](https://github.com/teenybase) team and [Claude](https://claude.com/claude-code).

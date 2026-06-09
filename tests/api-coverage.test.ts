@@ -256,6 +256,13 @@ describe('Workers Assets 3-step upload', () => {
     const cssResp = await fetch(`${sim.url}/__wfp/dispatch/site/style.css`);
     expect(cssResp.status).toBe(200);
     expect(await cssResp.text()).toBe(cssBody);
+
+    // GET /content returns only user modules — not the uploaded asset tree.
+    const content = await fetch(`${sim.url}/accounts/local/workers/dispatch/namespaces/prod/scripts/site/content`);
+    const ctBody = await content.text();
+    expect(ctBody).toContain('w.mjs');
+    expect(ctBody).not.toContain('__assets');
+    expect(ctBody).not.toContain('__wfp_');
   });
 
   it('empty manifest: session jwt IS the completion token (no bucket upload needed)', async () => {
@@ -316,6 +323,36 @@ describe('Workers Assets 3-step upload', () => {
     const resp = await fetch(`${sim.url}/__wfp/dispatch/prod/aonly/`);
     expect(resp.status).toBe(200);
     expect(await resp.text()).toContain('asset-only-root');
+  });
+
+  it('redeploying an unchanged asset-only tenant still serves [regression]', async () => {
+    const { sim, cleanup } = await bootSim(); teardown = cleanup;
+
+    const html = '<html><body>redeploy-asset</body></html>';
+    const hash = await sha256First32(html);
+    const session = await (await fetch(`${sim.url}/accounts/local/workers/dispatch/namespaces/prod/scripts/aredep/assets-upload-session`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ manifest: { '/index.html': { hash, size: html.length } } }),
+    })).json();
+    const fd = new FormData(); fd.append(hash, btoa(html));
+    const completionJwt = (await (await fetch(`${sim.url}/accounts/local/workers/assets/upload?base64=true`, {
+      method: 'POST', headers: { authorization: `Bearer ${session.result.jwt}` }, body: fd,
+    })).json()).result.jwt;
+
+    const deploy = () => {
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify({ assets: { jwt: completionJwt }, compatibility_date: '2025-01-01' })], { type: 'application/json' }));
+      return fetch(`${sim.url}/accounts/local/workers/dispatch/namespaces/prod/scripts/aredep`, { method: 'PUT', body: form });
+    };
+
+    expect((await deploy()).status).toBe(200);
+    expect((await fetch(`${sim.url}/__wfp/dispatch/prod/aredep/`)).status).toBe(200);
+    // Redeploy with identical content: the generated __wfp_assets_only.mjs source is
+    // unchanged, so the path cache must not skip rewriting it after the dir-swap.
+    expect((await deploy()).status).toBe(200);
+    const resp = await fetch(`${sim.url}/__wfp/dispatch/prod/aredep/`);
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toContain('redeploy-asset');
   });
 });
 
@@ -537,3 +574,21 @@ async function sha256First32(s: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', buf);
   return [...new Uint8Array(digest)].slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join('');
 }
+
+describe('dispatch response fidelity', () => {
+  let teardown: (() => Promise<void>) | null = null;
+  afterEach(async () => { if (teardown) { await teardown(); teardown = null; } });
+
+  it('preserves multiple Set-Cookie headers from a tenant response [regression]', async () => {
+    const { sim, cleanup } = await bootSim(); teardown = cleanup;
+    await sim.deploy({
+      namespace: 'prod', scriptName: 'cookies', mainModule: 'w.mjs',
+      files: {
+        'w.mjs': `export default { fetch() { const h = new Headers(); h.append('set-cookie','a=1; Path=/'); h.append('set-cookie','b=2; Path=/'); return new Response('ok', { headers: h }); } };`,
+      },
+    });
+    const resp = await fetch(`${sim.url}/__wfp/dispatch/prod/cookies/`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.getSetCookie()).toEqual(['a=1; Path=/', 'b=2; Path=/']);
+  });
+});

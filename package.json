@@ -1,6 +1,6 @@
 {
   "name": "cf-wfp-simulator",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local simulator for Cloudflare Workers for Platforms. Import the wrap function in your dispatcher; flip one URL env var to switch between localhost and CF.",
   "type": "module",
   "license": "Apache-2.0",

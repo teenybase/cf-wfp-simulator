@@ -22,7 +22,8 @@ export interface WFPClientOptions {
 export interface DeployOptions {
   namespace: string;
   scriptName: string;
-  mainModule: string;
+  /** Entry module specifier. Omit for asset-only deploys (pass `metadataExtra.assets` instead). */
+  mainModule?: string;
   files: Record<string, string | Uint8Array>;
   bindings?: Binding[];
   tags?: string[];
@@ -51,7 +52,7 @@ export class WFPClient {
   async deploy(o: DeployOptions): Promise<CFEnvelope<ScriptInfo>> {
     const fd = new FormData();
     const metadata: ScriptMetadata = {
-      main_module: o.mainModule,
+      ...(o.mainModule ? { main_module: o.mainModule } : {}),
       bindings: o.bindings ?? [],
       tags: o.tags ?? [],
       ...(o.compatibilityDate ? { compatibility_date: o.compatibilityDate } : {}),
