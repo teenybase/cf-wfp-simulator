@@ -1,0 +1,73 @@
+{
+  "name": "cf-wfp-simulator",
+  "version": "0.1.0",
+  "description": "Local simulator for Cloudflare Workers for Platforms. Import the wrap function in your dispatcher; flip one URL env var to switch between localhost and CF.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Palash Bansal <palash@shaders.app>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/teenybase/cf-wfp-simulator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/teenybase/cf-wfp-simulator/issues"
+  },
+  "homepage": "https://github.com/teenybase/cf-wfp-simulator#readme",
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "workers-for-platforms",
+    "wfp",
+    "dispatch-namespace",
+    "miniflare",
+    "wrangler",
+    "simulator",
+    "local-development",
+    "saas"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./wrap": {
+      "types": "./dist/wrap.d.ts",
+      "import": "./dist/wrap.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    }
+  },
+  "bin": {
+    "cf-wfp-simulator": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "scripts/fix-alpine-workerd.sh",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run check && npm run build"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "miniflare": "^4.20260424.0"
+  },
+  "devDependencies": {
+    "@types/busboy": "^1.5.4",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

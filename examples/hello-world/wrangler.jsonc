@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hello-dispatcher",
+  "main": "src/dispatcher.ts",
+  "compatibility_date": "2025-10-08",
+  "vars": {
+    // Local dev: route via HTTP to cf-wfp-simulator on :8788.
+    // In prod: drop this and add a real dispatch_namespaces binding (see below).
+    "WFP_SIM_URL": "http://127.0.0.1:8788"
+  }
+  // For production, replace `vars.WFP_SIM_URL` with:
+  // "dispatch_namespaces": [
+  //   { "binding": "dispatcher", "namespace": "production" }
+  // ]
+}

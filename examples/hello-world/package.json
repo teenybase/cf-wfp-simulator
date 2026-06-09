@@ -1,0 +1,16 @@
+{
+  "name": "cf-wfp-simulator-hello-world",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sim": "cf-wfp-simulator",
+    "wrangler": "wrangler dev",
+    "deploy-tenant": "node src/deploy-tenant.mjs"
+  },
+  "dependencies": {
+    "cf-wfp-simulator": "file:../.."
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

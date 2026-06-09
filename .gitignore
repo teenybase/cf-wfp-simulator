@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.wfp-local/
+.DS_Store
+*.log
+.local-notes/
+test-run-results/
